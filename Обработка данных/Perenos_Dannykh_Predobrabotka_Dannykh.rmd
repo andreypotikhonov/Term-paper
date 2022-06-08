@@ -1,0 +1,149 @@
+```{r}
+# Связь R и SQL
+
+library(odbc)
+library(DBI)
+library(dplyr)
+
+sort(unique(odbcListDrivers()[[1]]))
+
+data = dbConnect(odbc(),
+                 Driver = "SQL Server",
+                 Server = "PostgreSQL 14",
+                 Database = "zakupki",
+                 UID = "admin",
+                 PWD = rstudioapi::askForPassword("admin"),
+                 Port = 1433)
+```
+
+
+```{r}
+# Обработка .csv из SQL и объединение в один датасет
+
+options(scipen = 999)
+
+auction_purchase_objects = read.csv("D:\\temp/auction_purchase_objects.csv", encoding = "UTF-8")
+auctions = read.csv("D:\\temp/auctions.csv", encoding = "UTF-8")
+criterion_rates = read.csv("D:\\temp/criterion_rates.csv")
+participants = read.csv("D:\\temp/participants.csv", encoding = "UTF-8")
+procurers = read.csv("D:\\temp/procurers.csv", encoding = "UTF-8")
+purchase_objects = read.csv("D:\\temp/purchase_objects.csv", encoding = "UTF-8")
+regions = read.csv("D:\\temp/regions.csv", encoding = "UTF-8")
+
+data = left_join(auction_purchase_objects, auctions, by = c("auction_id" = "id"))
+data = left_join(data, criterion_rates, by = c("auction_id" = "auction_id"))
+data = left_join(data, participants, by = c("participant_inn" = "inn"))
+data = left_join(data, procurers, by = c("participant_inn" = "inn"))
+data = left_join(data, purchase_objects, by = c("auction_id" = "id"))
+data = left_join(data, regions, by = c("region_id" = "id"))
+
+data = data %>% arrange(auction_id)
+```
+
+
+```{r}
+# Создание готовых объединенных .xlsx и .csv файлов
+
+library("writexl")
+
+write_xlsx(data, "D:\\temp\\all_in.xlsx")
+write.csv(data,"D:\\temp\\all_in.csv", row.names = FALSE)
+
+check = read.csv("D:\\temp\\all_in.csv")
+```
+
+
+```{r}
+# Предобработка данных
+
+library(dplyr)
+library(chron)
+library(ggplot2)
+
+data = read.csv("D:\\temp\\auctions_and_bids.csv")
+
+options(scipen = 999)
+data = data %>% select(-X, -currency, -prolong_date, -is_approved, -is_after_prolong)
+data = data %>% rename(number_of_participants = n_commission_members)
+data = data %>% select(auction_id, max_price, number_of_participants, start_date, end_date, date, price, purchase_number, procurer_reg_num, participant_inn, region)
+
+data$start_date = strptime(data$start_date, format = "%Y-%m-%d %H:%M:%OS", tz = "EST")
+data$end_date = strptime(data$end_date, format = "%Y-%m-%d %H:%M:%OS", tz = "EST")
+data$date = strptime(data$date, format = "%Y-%m-%d %H:%M:%OS", tz = "EST")
+
+data = data %>% filter(max_price >= 5000)
+data = data %>% filter(number_of_participants > 2)
+data = data %>% filter(end_date < "2022-07-01 00:00:00")
+data = data %>% filter(date >= "2012-01-01 00:00:00" & date < "2022-07-01 00:00:00")
+data = data %>% filter(price >= 1000)
+```
+
+
+```{r}
+# Анализ данных и построение графиков для работы
+
+summary(data)
+
+
+ggplot(data) + 
+  geom_boxplot(aes(y = number_of_participants), alpha = 0.5, fill = "blue") +
+  labs(title = "Распределение аукционов по количеству участников") +
+  ylab("Количество участников") +
+  theme_light() +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())
+
+ggplot(data) + 
+  geom_histogram(aes(x = number_of_participants), binwidth = 1, alpha = 0.5, fill = "blue") +
+  labs(title = "Распределение аукционов по количеству участников") +
+  xlab("Количество участников") +
+  ylab("Количество аукционов") +
+  theme(axis.title.x = element_text(hjust = 1)) +
+  scale_x_continuous(limits = c(0, 25), breaks = 0:25) +
+  theme_light()
+
+ggplot(data) + 
+  geom_bar(aes(x = region), colour = "white", fill = "darkblue", alpha = 0.5, stat = "count") +
+  labs(title = "Распределение аукционов по регионам") +
+  xlab("Регионы") +
+  ylab("Количество аукционов") +
+  theme_light() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.7))
+
+x = data %>% group_by(region) %>% count()
+
+x = data %>% group_by(max_price) %>% count()
+
+
+write.csv(data, "D:\\temp\\real_data.csv", row.names = FALSE)
+
+
+data = data %>% select(-auction_id, -start_date, -end_date, -date, -purchase_number, -procurer_reg_num, -participant_inn, -region)
+
+library(psych)
+library(xtable)
+table = describe(data) %>% transmute(n, mean = round(mean, 2), sd = round(sd, 2), median = round(median, 2), min = round(min, 2), max = round(max, 2))
+table$n = as.integer(table$n)
+xtable(table)
+
+data = data %>% filter(region %in% c("Moskovskaja_obl", "Moskva", "Sankt-Peterburg", "Krasnodarskij_kraj", "Bashkortostan_Resp", "Sverdlovskaja_obl", "Khanty-Mansijskij_AO-Jugra_AO", "Novosibirskaja_obl", "Rostovskaja_obl", "Khabarovskij_kraj"))
+
+library(stringr)
+data$region = str_replace_all(data$region, "Moskovskaja_obl", "Московская область")
+data$region = str_replace_all(data$region, "Moskva", "Москва")
+data$region = str_replace_all(data$region, "Sankt-Peterburg", "Санкт-Петербург")
+data$region = str_replace_all(data$region, "Krasnodarskij_kraj", "Краснодарский край")
+data$region = str_replace_all(data$region, "Bashkortostan_Resp", "Республика Башкортостан")
+data$region = str_replace_all(data$region, "Sverdlovskaja_obl", "Свердловская область")
+data$region = str_replace_all(data$region, "Khanty-Mansijskij_AO-Jugra_AO", "Ханты-Мансийский АО - Югра")
+data$region = str_replace_all(data$region, "Novosibirskaja_obl", "Новосибирская область")
+data$region = str_replace_all(data$region, "Rostovskaja_obl", "Ростовская область")
+data$region = str_replace_all(data$region, "Khabarovskij_kraj", "Хабаровский край")
+
+ggplot(data) + 
+  geom_bar(aes(x = reorder(region, region, function(x)-length(x))), colour = "white", fill = "darkblue", alpha = 0.5, stat = "count") +
+  labs(title = "Распределение аукционов по регионам", subtitle = "(первые 10 регионов по количеству аукционов)") +
+  xlab("Регионы") +
+  ylab("Количество аукционов") +
+  theme_light() +
+  theme(axis.text.x = element_text(angle = 60, vjust = 0.5))
+```
